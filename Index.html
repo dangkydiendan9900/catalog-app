@@ -164,16 +164,31 @@
     const API_URL = 'https://script.google.com/macros/s/AKfycby5qnTGtaQiCzEnGYqnQqlXmwuiWgjGM1wt_EmiuPuV24KkMP1tXGjzesSKMTKC5-qy/exec';
 
     /**
-     * Tải dữ liệu từ server (Google Sheet qua Apps Script Web App) khi mở trang.
+     * Tải dữ liệu từ server (Google Sheet qua Apps Script Web App) bằng kỹ
+     * thuật JSONP — tránh lỗi CORS khi gọi Apps Script từ domain khác
+     * (GitHub Pages) bằng fetch() thông thường.
      */
     function loadCatalog() {
-      fetch(API_URL)
-        .then(function (res) {
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          return res.json();
-        })
-        .then(onCatalogLoaded)
-        .catch(onCatalogError);
+      const callbackName = 'catalogCallback_' + Date.now();
+
+      window[callbackName] = function (data) {
+        onCatalogLoaded(data);
+        cleanup();
+      };
+
+      const script = document.createElement('script');
+      script.src = API_URL + '?callback=' + callbackName;
+      script.onerror = function () {
+        onCatalogError(new Error('Không tải được dữ liệu từ Apps Script'));
+        cleanup();
+      };
+
+      function cleanup() {
+        delete window[callbackName];
+        script.remove();
+      }
+
+      document.body.appendChild(script);
     }
 
     /**
