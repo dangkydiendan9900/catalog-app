@@ -158,13 +158,22 @@
     let currentMa = null;
 
     /**
-     * Tải dữ liệu từ server (Google Sheet qua Apps Script) khi mở trang.
+     * URL Web App của Google Apps Script (Deploy > New deployment > Web app).
+     * Thay bằng URL thật sau khi deploy.
+     */
+    const API_URL = 'DÁN_URL_WEB_APP_CỦA_BẠN_VÀO_ĐÂY';
+
+    /**
+     * Tải dữ liệu từ server (Google Sheet qua Apps Script Web App) khi mở trang.
      */
     function loadCatalog() {
-      google.script.run
-        .withSuccessHandler(onCatalogLoaded)
-        .withFailureHandler(onCatalogError)
-        .getCatalogData();
+      fetch(API_URL)
+        .then(function (res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        })
+        .then(onCatalogLoaded)
+        .catch(onCatalogError);
     }
 
     /**
