@@ -3,6 +3,8 @@
 <head>
   <base target="_top">
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Catalog Sản Phẩm</title>
   <style>
     :root {
       --primary: #2c3e50;
@@ -151,6 +153,16 @@
 
   <script>
     /**
+     * URL Web App (kết thúc bằng /exec). CHỈ cần điền khi đặt file này ở
+     * nơi khác (vd: GitHub Pages). Khi chạy trực tiếp trong Apps Script Web App
+     * thì để trống, trang sẽ tự dùng google.script.run.
+     */
+    const API_URL = 'https://script.google.com/macros/s/AKfycbytQ51z3dWYuvK9duRxVMpCrKdGHnOGVZsmeDquIS5tw7IaFvOxylN5aafMsr_VzBK2/exec';
+
+    /** Thời gian chờ tối đa (ms) khi tải dữ liệu qua JSONP. */
+    const JSONP_TIMEOUT_MS = 20000;
+
+    /**
      * Trạng thái ứng dụng: dữ liệu catalog, tab đang chọn, mã đang xem.
      */
     let catalog = { categories: [], data: {} };
@@ -158,37 +170,75 @@
     let currentMa = null;
 
     /**
-     * URL Web App của Google Apps Script (Deploy > New deployment > Web app).
-     * Thay bằng URL thật sau khi deploy.
+     * Kiểm tra trang đang chạy bên trong Apps Script Web App hay không.
+     * @return {boolean} true nếu google.script.run khả dụng.
      */
-    const API_URL = 'https://script.google.com/macros/s/AKfycby5qnTGtaQiCzEnGYqnQqlXmwuiWgjGM1wt_EmiuPuV24KkMP1tXGjzesSKMTKC5-qy/exec';
+    function isAppsScriptEnv() {
+      return typeof google !== 'undefined' && google.script && Boolean(google.script.run);
+    }
 
     /**
-     * Tải dữ liệu từ server (Google Sheet qua Apps Script Web App) bằng kỹ
-     * thuật JSONP — tránh lỗi CORS khi gọi Apps Script từ domain khác
-     * (GitHub Pages) bằng fetch() thông thường.
+     * Tải dữ liệu khi mở trang: dùng google.script.run nếu chạy trong Apps Script,
+     * ngược lại dùng JSONP qua API_URL.
      */
     function loadCatalog() {
-      const callbackName = 'catalogCallback_' + Date.now();
+      if (isAppsScriptEnv()) {
+        google.script.run
+          .withSuccessHandler(handleResult)
+          .withFailureHandler(onCatalogError)
+          .getCatalogData();
+      } else {
+        loadCatalogViaJsonp();
+      }
+    }
 
-      window[callbackName] = function (data) {
-        onCatalogLoaded(data);
-        cleanup();
-      };
+    /**
+     * Tải dữ liệu qua JSONP (dùng khi host ngoài Apps Script, vd GitHub Pages).
+     */
+    function loadCatalogViaJsonp() {
+      if (!API_URL) {
+        onCatalogError(new Error('Chưa cấu hình API_URL (URL Web App .../exec).'));
+        return;
+      }
 
+      const callbackName = '__catalogCb' + Date.now();
       const script = document.createElement('script');
-      script.src = API_URL + '?callback=' + callbackName;
-      script.onerror = function () {
-        onCatalogError(new Error('Không tải được dữ liệu từ Apps Script'));
-        cleanup();
-      };
+      let timer = null;
 
       function cleanup() {
+        clearTimeout(timer);
         delete window[callbackName];
         script.remove();
       }
 
-      document.body.appendChild(script);
+      window[callbackName] = function (result) {
+        cleanup();
+        handleResult(result);
+      };
+      script.onerror = function () {
+        cleanup();
+        onCatalogError(new Error('Không kết nối được tới máy chủ dữ liệu.'));
+      };
+      timer = setTimeout(function () {
+        cleanup();
+        onCatalogError(new Error('Hết thời gian chờ tải dữ liệu.'));
+      }, JSONP_TIMEOUT_MS);
+
+      const separator = API_URL.indexOf('?') === -1 ? '?' : '&';
+      script.src = API_URL + separator + 'callback=' + encodeURIComponent(callbackName);
+      document.head.appendChild(script);
+    }
+
+    /**
+     * Kiểm tra kết quả trả về từ backend rồi chuyển sang hiển thị hoặc báo lỗi.
+     * @param {{categories: string[], data: Object, error: (string|undefined)}} result
+     */
+    function handleResult(result) {
+      if (!result || result.error) {
+        onCatalogError(new Error(result && result.error ? result.error : 'Dữ liệu trả về rỗng.'));
+        return;
+      }
+      onCatalogLoaded(result);
     }
 
     /**
@@ -208,11 +258,12 @@
 
     /**
      * Hiển thị thông báo lỗi khi không tải được dữ liệu.
-     * @param {Error} err - Lỗi trả về từ Apps Script.
+     * @param {Error|string} err - Lỗi trả về từ Apps Script hoặc từ JSONP.
      */
     function onCatalogError(err) {
+      const message = err && err.message ? err.message : String(err);
       document.getElementById('mainContent').innerHTML =
-        '<div class="empty">Lỗi tải dữ liệu: ' + escapeHtml(err.message) + '</div>';
+        '<div class="empty">Lỗi tải dữ liệu: ' + escapeHtml(message) + '</div>';
     }
 
     /**
@@ -302,7 +353,11 @@
       main.appendChild(header);
 
       if (images.length === 0) {
-        main.innerHTML += '<div class="empty">Mã này chưa có ảnh.</div>';
+        // Dùng appendChild thay vì innerHTML += để không làm mất sự kiện của nút "Quay lại".
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'Mã này chưa có ảnh.';
+        main.appendChild(empty);
         return;
       }
 
